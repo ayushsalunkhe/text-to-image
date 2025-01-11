@@ -123,6 +123,7 @@
             color: var(--text-light);
             position: relative;
             overflow: hidden;
+            transition: color 0.3s ease;
         }
 
         .navbar-brand::after {
@@ -135,6 +136,10 @@
             background: linear-gradient(90deg, transparent, var(--accent), transparent);
             transform: translateX(-100%);
             animation: shimmer 3s infinite;
+        }
+
+        .navbar-brand:hover {
+            color: var(--accent);
         }
 
         @keyframes shimmer {
