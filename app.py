@@ -19,6 +19,19 @@ client = Together()
 def home():
     return render_template('index.html')
 
+@app.route('/about_us')
+def about_us():
+    return render_template('about_us.html')
+
+@app.route('/contact_us')
+def contact_us():
+    return render_template('contact_us.html')
+
+@app.route('/explore_tools')
+def explore_tools():
+    return render_template('explore_tools.html')
+
+
 @app.route('/generate', methods=['POST'])
 def generate_image():
     prompt = request.form.get('prompt')
