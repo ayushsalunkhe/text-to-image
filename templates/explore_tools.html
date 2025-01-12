@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Explore AI tools by SNAP AI">
+    <meta name="description" content="Explore other AI tools by SNAP AI">
     <title>Explore Tools - SNAP AI</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
@@ -75,6 +75,7 @@
             }
         }
 
+        /* Navbar styles */
         .navbar {
             background: rgba(0, 0, 0, 0.8);
             backdrop-filter: blur(10px);
@@ -140,28 +141,21 @@
             transform: translateY(-2px);
         }
 
+        /* Hero section */
         .hero {
             padding: 8rem 0 4rem;
             text-align: center;
-            position: relative;
         }
 
         .hero h1 {
             font-size: 3.5rem;
             font-weight: 700;
-            margin-bottom: 1.5rem;
-            line-height: 1.2;
-            background: linear-gradient(45deg, #fff, #007AFF);
+            background: linear-gradient(45deg, #fff, var(--accent));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: titleGlow 2s ease-in-out infinite alternate;
         }
 
-        @keyframes titleGlow {
-            from { text-shadow: 0 0 20px rgba(0, 122, 255, 0); }
-            to { text-shadow: 0 0 20px rgba(0, 122, 255, 0.5); }
-        }
-
+        /* Tools grid */
         .tools-grid {
             padding: 2rem 0;
         }
@@ -285,24 +279,6 @@
             height: 600px;
             background: rgba(255, 51, 102, 0.15);
         }
-
-        @media (max-width: 768px) {
-            .navbar {
-                padding: 1rem;
-            }
-            
-            .hero h1 {
-                font-size: 2.5rem;
-            }
-
-            .tool-card {
-                height: 300px;
-            }
-
-            .grid {
-                background-size: 30px 30px;
-            }
-        }
     </style>
 </head>
 <body>
@@ -323,7 +299,7 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav mx-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="index.html">Text to Image AI</a>
+                        <a class="nav-link" href="index_us.html">Text to Image AI</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="about_us.html">About Us</a>
@@ -347,7 +323,7 @@
             <!-- Tool Card 1 -->
             <div class="col-md-4">
                 <div class="tool-card">
-                    <img src="/placeholder.svg?height=400&width=300" alt="Image Enhancer AI" class="tool-image">
+                    <img src="images/placeholder1.png" alt="Image Enhancer AI" class="tool-image">
                     <div class="tool-content">
                         <div>
                             <h2 class="tool-title">Image Enhancer AI</h2>
@@ -361,7 +337,7 @@
             <!-- Tool Card 2 -->
             <div class="col-md-4">
                 <div class="tool-card">
-                    <img src="/placeholder.svg?height=400&width=300" alt="Background Remover" class="tool-image">
+                    <img src="images/placeholder2.png" alt="Background Remover AI" class="tool-image">
                     <div class="tool-content">
                         <div>
                             <h2 class="tool-title">Bg Remover</h2>
@@ -375,7 +351,7 @@
             <!-- Tool Card 3 -->
             <div class="col-md-4">
                 <div class="tool-card">
-                    <img src="/placeholder.svg?height=400&width=300" alt="Image Re-Light" class="tool-image">
+                    <img src="images/placeholder3.png" alt="Image Re-Light" class="tool-image">
                     <div class="tool-content">
                         <div>
                             <h2 class="tool-title">Image Re-Light</h2>
@@ -389,14 +365,5 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Mouse parallax effect for background
-        document.addEventListener('mousemove', (e) => {
-            const mouseX = e.clientX / window.innerWidth;
-            const mouseY = e.clientY / window.innerHeight;
-            
-            document.querySelector('.grid').style.transform = `translate(${mouseX * 50}px, ${mouseY * 50}px) rotateX(${mouseY * 10}deg) rotateY(${-mouseX * 10}deg)`;
-        });
-    </script>
 </body>
 </html>
