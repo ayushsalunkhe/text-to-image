@@ -414,6 +414,12 @@
                         placeholder="Describe the image you want to create..."
                     ></textarea>
                 </div>
+                <div class="mb-4">
+                    <select class="form-control" id="model" name="model" required>
+                        <option value="black-forest-labs/FLUX.1-schnell">Current Model</option>
+                        <option value="black-forest-labs/FLUX.1-dev">New Model (FLUX.1-dev)</option>
+                    </select>
+                </div>
                 <div class="d-grid">
                     <button type="submit" class="btn btn-generate">
                         Generate Image
@@ -460,6 +466,7 @@
             }
             
             const prompt = document.getElementById('prompt').value;
+            const model = document.getElementById('model').value;
             const loading = document.getElementById('loading');
             const resultImage = document.getElementById('result-image');
             const errorMessage = document.getElementById('error-message');
@@ -475,7 +482,7 @@
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
-                    body: `prompt=${encodeURIComponent(prompt)}`
+                    body: `prompt=${encodeURIComponent(prompt)}&model=${encodeURIComponent(model)}`
                 });
                 
                 const data = await response.json();
