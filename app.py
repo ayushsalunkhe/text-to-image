@@ -35,13 +35,14 @@ def explore_tools():
 @app.route('/generate', methods=['POST'])
 def generate_image():
     prompt = request.form.get('prompt')
-    logger.debug(f"Received prompt: {prompt}")
+    model = request.form.get('model')
+    logger.debug(f"Received prompt: {prompt} and model: {model}")
     
     try:
         logger.debug("Making API request to Together AI")
         response = client.images.generate(
             prompt=prompt,
-            model="black-forest-labs/FLUX.1-schnell",
+            model=model,
             width=1024,
             height=768,
             steps=4,
