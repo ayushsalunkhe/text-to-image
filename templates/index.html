@@ -237,17 +237,15 @@
             margin-bottom: 2rem;
         }
 
-        ..generator-card {
-    background: rgba(30, 30, 30, 0.9); /* Darker background */
-    border-radius: var(--border-radius);
-    padding: 2rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); /* Darker shadow */
-    backdrop-filter: blur(10px);
-    transition: all 0.3s ease;
-    position: relative;
-    overflow: hidden;
-}
-
+        .generator-card {
+            background: rgba(30, 30, 30, 0.9); /* Darker background */
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); /* Darker shadow */
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .generator-card::before {
@@ -342,6 +340,21 @@
             transform: scale(1);
         }
 
+        .model-status {
+            display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            background: rgba(0, 0, 0, 0.5);
+            color: var(--text-light);
+        }
+        
+        .model-status .spinner-border {
+            width: 1rem;
+            height: 1rem;
+            margin-right: 0.5rem;
+        }
+
         @media (max-width: 768px) {
             .navbar {
                 padding: 1rem;
@@ -416,9 +429,13 @@
                 </div>
                 <div class="mb-4">
                     <select class="form-control" id="model" name="model" required>
-                        <option value="black-forest-labs/FLUX.1-schnell">Current Model</option>
-                        <option value="black-forest-labs/FLUX.1-dev">New Model (FLUX.1-dev)</option>
+                        <option value="black-forest-labs/FLUX.1-schnell">Fast Generation Model (FLUX.1-schnell)</option>
+                        <option value="black-forest-labs/FLUX.1-dev">High Quality Model (FLUX.1-dev) - May take longer</option>
                     </select>
+                    <small class="form-text text-light mt-2">
+                        High Quality Model may take longer to generate images and requires more processing power.
+                        First use will require downloading the model (several minutes).
+                    </small>
                 </div>
                 <div class="d-grid">
                     <button type="submit" class="btn btn-generate">
@@ -427,11 +444,15 @@
                 </div>
             </form>
             
-            <div id="loading" class="text-center my-5">
+            <div id="loading" class="text-center my-5" style="display: none;">
                 <div class="spinner-border text-primary">
                     <span class="visually-hidden">Loading...</span>
                 </div>
                 <p class="h5 mt-3">Creating your masterpiece...</p>
+                <div class="progress mt-3" style="height: 5px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                </div>
+                <p class="text-muted mt-2" id="time-elapsed">Time elapsed: 0s</p>
             </div>
             
             <div id="result" class="mt-4 text-center">
@@ -456,6 +477,94 @@
         });
 
         const form = document.getElementById('generateForm');
+        const generateImage = async () => {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 420000); // 7 minute timeout                
+                const prompt = document.getElementById('prompt').value;
+                const model = document.getElementById('model').value;
+                const loading = document.getElementById('loading');
+                const resultImage = document.getElementById('result-image');
+                const errorMessage = document.getElementById('error-message');
+                const generateButton = document.querySelector('.btn-generate');
+                const progressBar = loading.querySelector('.progress-bar');
+                const timeElapsed = document.getElementById('time-elapsed');
+                
+                loading.style.display = 'block';
+                resultImage.style.display = 'none';
+                resultImage.classList.remove('show');
+                errorMessage.style.display = 'none';
+                generateButton.disabled = true;
+
+                // Start progress animation
+                let startTime = Date.now();
+                let progress = 0;
+                const updateProgress = () => {
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    timeElapsed.textContent = `Time elapsed: ${elapsed}s`;
+                    
+                    // Slowly increase progress up to 90%
+                    if (progress < 90) {
+                        progress += (90 - progress) * 0.1;
+                        progressBar.style.width = `${progress}%`;
+                    }
+                };
+                
+                const progressInterval = setInterval(updateProgress, 1000);
+                
+                try {
+                    const response = await fetch('/generate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: `prompt=${encodeURIComponent(prompt)}&model=${encodeURIComponent(model)}`,
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to generate image. Please try again.`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // Complete the progress bar
+                        progress = 100;
+                        progressBar.style.width = '100%';
+                        
+                        // Display the image
+                        resultImage.onerror = () => {
+                            resultImage.src = `data:image/png;base64,${data.image}`;
+                        };
+                        resultImage.src = `data:image/jpeg;base64,${data.image}`;
+                        resultImage.style.display = 'block';
+                        setTimeout(() => {
+                            resultImage.classList.add('show');
+                        }, 100);
+                        resultImage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    } else {
+                        throw new Error(data.error || 'Failed to generate image');
+                    }
+                } finally {
+                    clearInterval(progressInterval);
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    errorMessage.textContent = "Image generation is taking longer than expected. Please try again or use a simpler prompt.";
+                } else {
+                    errorMessage.textContent = error.message;
+                }
+                errorMessage.style.display = 'block';
+                errorMessage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                document.querySelector('.btn-generate').disabled = false;
+            }
+        };
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -465,49 +574,21 @@
                 return;
             }
             
-            const prompt = document.getElementById('prompt').value;
-            const model = document.getElementById('model').value;
-            const loading = document.getElementById('loading');
-            const resultImage = document.getElementById('result-image');
-            const errorMessage = document.getElementById('error-message');
-            
-            loading.style.display = 'block';
-            resultImage.style.display = 'none';
-            resultImage.classList.remove('show');
-            errorMessage.style.display = 'none';
-            
-            try {
-                const response = await fetch('/generate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: `prompt=${encodeURIComponent(prompt)}&model=${encodeURIComponent(model)}`
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    resultImage.src = `data:image/jpeg;base64,${data.image}`;
-                    resultImage.style.display = 'block';
-                    // Add small delay for animation
-                    setTimeout(() => {
-                        resultImage.classList.add('show');
-                    }, 100);
-                    resultImage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                } else {
-                    throw new Error(data.error || 'Failed to generate image');
-                }
-            } catch (error) {
-                errorMessage.textContent = 'Error: ' + error.message;
-                errorMessage.style.display = 'block';
-            } finally {
-                loading.style.display = 'none';
-            }
+            await generateImage();
         });
 
         document.getElementById('prompt').addEventListener('input', () => {
             form.classList.remove('was-validated');
+        });
+
+        // Update loading message based on selected model
+        document.getElementById('model').addEventListener('change', function() {
+            const loadingMsg = document.querySelector('#loading p');
+            if (this.value === "black-forest-labs/FLUX.1-dev") {
+                loadingMsg.textContent = "Creating your masterpiece with high quality settings...";
+            } else {
+                loadingMsg.textContent = "Creating your masterpiece...";
+            }
         });
     </script>
 </body>
