@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Extract text from images using AI">
+    <title>AI - Image to Text Extractor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #000000;
+            --secondary: #ffffff;
+            --accent: #007AFF;
+            --grid-color: rgba(255, 255, 255, 0.1);
+            --background: #0a0a0a;
+            --card-bg: rgba(255, 255, 255, 0.95);
+            --text: #1a1a1a;
+            --text-light: #ffffff;
+            --border-radius: 12px;
+        }
+
+        body {
+            background-color: var(--background);
+            color: var(--text-light);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* 3D Background Animation */
+        .background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            perspective: 1000px;
+            z-index: -1;
+            overflow: hidden;
+        }
+
+        .grid {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            transform-style: preserve-3d;
+            animation: rotate 60s linear infinite;
+        }
+
+        .grid::before,
+        .grid::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 50px 50px;
+            transform: rotateX(45deg);
+        }
+
+        .grid::after {
+            transform: rotateX(45deg) rotateY(180deg);
+        }
+
+        @keyframes rotate {
+            0% {
+                transform: rotateZ(0deg);
+            }
+            100% {
+                transform: rotateZ(360deg);
+            }
+        }
+
+        /* Glowing Orbs */
+        .orb {
+            position: fixed;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .orb-1 {
+            background: #ff3366;
+            top: -100px;
+            left: -100px;
+            animation: float1 15s ease-in-out infinite;
+        }
+
+        .orb-2 {
+            background: #4433ff;
+            bottom: -100px;
+            right: -100px;
+            animation: float2 20s ease-in-out infinite;
+        }
+
+        @keyframes float1 {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(100px, 100px); }
+        }
+
+        @keyframes float2 {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(-100px, -100px); }
+        }
+
+        .navbar {
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: var(--text-light);
+            position: relative;
+            overflow: hidden;
+            transition: color 0.3s ease;
+        }
+
+        .navbar-brand::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            transform: translateX(-100%);
+            animation: shimmer 3s infinite;
+        }
+
+        .navbar-brand:hover {
+            color: var(--accent);
+        }
+
+        @keyframes shimmer {
+            100% { transform: translateX(100%); }
+        }
+
+        .nav-link {
+            color: var(--text-light);
+            font-weight: 500;
+            padding: 0.5rem 1rem;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .nav-link::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            width: 0;
+            height: 2px;
+            background: var(--accent);
+            transition: all 0.3s ease;
+        }
+
+        .nav-link:hover::before {
+            width: 80%;
+            left: 10%;
+        }
+
+        .nav-link:hover {
+            color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .hero {
+            padding: 8rem 0 4rem;
+            text-align: center;
+            position: relative;
+        }
+
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+            background: linear-gradient(45deg, #fff, #007AFF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: titleGlow 2s ease-in-out infinite alternate;
+        }
+
+        @keyframes titleGlow {
+            from { text-shadow: 0 0 20px rgba(0, 122, 255, 0); }
+            to { text-shadow: 0 0 20px rgba(0, 122, 255, 0.5); }
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 2rem;
+        }
+
+        .extractor-card {
+            background: rgba(30, 30, 30, 0.9);
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .extractor-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #007AFF, #ff3366, #4433ff);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .extractor-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        #upload-container {
+            border: 2px dashed var(--accent);
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        #upload-container:hover {
+            background: rgba(0, 122, 255, 0.1);
+        }
+
+        #image-preview {
+            max-width: 100%;
+            border-radius: var(--border-radius);
+            margin-top: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            opacity: 0;
+            transform: scale(0.9);
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #image-preview.show {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        #extracted-text {
+            width: 100%;
+            height: 200px;
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+            border: none;
+            resize: none;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #007AFF, #4433ff);
+            border: none;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 122, 255, 0.3);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent);
+            color: var(--text-light);
+        }
+
+        #loading {
+            display: none;
+            margin-top: 1rem;
+        }
+
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+
+        @media (max-width: 768px) {
+            .navbar {
+                padding: 1rem;
+            }
+            
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .extractor-card {
+                padding: 1.5rem;
+            }
+
+            .grid {
+                background-size: 30px 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background">
+        <div class="grid"></div>
+    </div>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <nav class="navbar navbar-expand-lg fixed-top">
+        <div class="container">
+            <a class="navbar-brand" href="#">TextSnap AI</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav mx-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">About</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">Features</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">Pricing</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="container">
+            <h1>Extract Text from Images with AI</h1>
+            <p>Experience the power of AI-driven text extraction</p>
+        </div>
+    </section>
+
+    <div class="container mb-5">
+        <div class="extractor-card">
+            <div id="upload-container">
+                <input type="file" id="image-upload" accept="image/*" style="display: none;">
+                <p>Drag & Drop or Click to Upload Image</p>
+            </div>
+            <img id="image-preview" src="/placeholder.svg" alt="Image Preview" style="display: none;">
+            <textarea id="extracted-text" placeholder="Extracted text will appear here..." readonly></textarea>
+            <div id="loading" class="text-center">
+                <div class="spinner-border text-primary">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Extracting text...</p>
+            </div>
+            <div class="d-flex justify-content-between mt-3">
+                <button id="copy-btn" class="btn btn-secondary">Copy to Clipboard</button>
+                <button id="export-btn" class="btn btn-primary">Export to Word</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Mouse parallax effect for orbs
+        document.addEventListener('mousemove', (e) => {
+            const orbs = document.querySelectorAll('.orb');
+            const mouseX = e.clientX / window.innerWidth;
+            const mouseY = e.clientY / window.innerHeight;
+
+            orbs.forEach((orb, index) => {
+                const speed = index === 0 ? 30 : -30;
+                orb.style.transform = `translate(${mouseX * speed}px, ${mouseY * speed}px)`;
+            });
+        });
+
+        const imageUpload = document.getElementById('image-upload');
+        const uploadContainer = document.getElementById('upload-container');
+        const imagePreview = document.getElementById('image-preview');
+        const extractedText = document.getElementById('extracted-text');
+        const copyBtn = document.getElementById('copy-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const loading = document.getElementById('loading');
+
+        uploadContainer.addEventListener('click', () => imageUpload.click());
+
+        uploadContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadContainer.style.borderColor = var(--accent);
+        });
+
+        uploadContainer.addEventListener('dragleave', () => {
+            uploadContainer.style.borderColor = '';
+        });
+
+        uploadContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadContainer.style.borderColor = '';
+            if (e.dataTransfer.files.length) {
+                imageUpload.files = e.dataTransfer.files;
+                handleImageUpload();
+            }
+        });
+
+        imageUpload.addEventListener('change', handleImageUpload);
+
+        function handleImageUpload() {
+            const file = imageUpload.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imagePreview.src = e.target.result;
+                    imagePreview.style.display = 'block';
+                    setTimeout(() => {
+                        imagePreview.classList.add('show');
+                    }, 100);
+                    extractTextFromImage();
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function extractTextFromImage() {
+            loading.style.display = 'block';
+            extractedText.value = '';
+            
+            // Simulating API call for text extraction
+            setTimeout(() => {
+                loading.style.display = 'none';
+                extractedText.value = "This is simulated extracted text. In a real application, you would integrate with an OCR API to extract text from the uploaded image.";
+            }, 2000);
+        }
+
+        copyBtn.addEventListener('click', () => {
+            extractedText.select();
+            document.execCommand('copy');
+            alert('Text copied to clipboard!');
+        });
+
+        exportBtn.addEventListener('click', () => {
+            const text = extractedText.value;
+            const blob = new Blob([text], { type: 'application/msword' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'extracted_text.doc';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        });
+    </script>
+</body>
+</html>
