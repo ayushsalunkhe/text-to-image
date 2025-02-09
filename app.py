@@ -1,7 +1,7 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 from together import Together
 from pyngrok import ngrok
-from huggingface_hub import login
+from huggingface_hub import login, InferenceClient
 import logging
 import os
 import base64
@@ -12,6 +12,12 @@ from functools import wraps
 import requests
 from datetime import datetime
 import re
+import cv2
+import numpy as np
+from PIL import Image
+import torch
+from basicsr.archs.rrdbnet_arch import RRDBNet
+from realesrgan import RealESRGANer
 
 # Set up logging
 logging.basicConfig(
@@ -85,11 +91,14 @@ try:
 except Exception as e:
     logger.error(f"Failed to login to Hugging Face: {str(e)}")
 
+# Initialize clients
 app = Flask(__name__)
-# Initialize Together client
 client = Together()
+hf_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
 
+# Update API URLs and add new model
 API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
+SD_MODEL = "stabilityai/stable-diffusion-3.5-large-turbo"
 headers = {"Authorization": f"Bearer {os.environ['HUGGINGFACE_TOKEN']}"}
 
 @retry_with_backoff(retries=3)
@@ -144,6 +153,65 @@ def generate_with_together(prompt, model):
         logger.error(f"Together AI generation error: {str(e)}")
         raise
 
+@retry_with_backoff(retries=3)
+def generate_with_sd(prompt):
+    """Generate image using Stable Diffusion 3.5"""
+    logger.info("Generating image with Stable Diffusion 3.5")
+    try:
+        # Generate image
+        image = hf_client.text_to_image(
+            prompt,
+            model=SD_MODEL
+        )
+        
+        # Convert PIL Image to bytes
+        img_byte_arr = BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        image_bytes = img_byte_arr.getvalue()
+        
+        # Save image locally
+        save_image_locally(image_bytes, prompt, "stable-diffusion")
+        
+        # Convert to base64
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        logger.info("Successfully generated image with Stable Diffusion 3.5")
+        return image_base64
+        
+    except Exception as e:
+        logger.error(f"Stable Diffusion generation error: {str(e)}")
+        raise
+
+def init_realesrgan():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+    
+    # Create weights directory if it doesn't exist
+    model_path = os.path.join(os.path.dirname(__file__), 'weights')
+    os.makedirs(model_path, exist_ok=True)
+    
+    # Model path
+    model_file = os.path.join(model_path, 'RealESRGAN_x4plus.pth')
+    
+    # Download model if not exists
+    if not os.path.exists(model_file):
+        url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
+        response = requests.get(url)
+        with open(model_file, 'wb') as f:
+            f.write(response.content)
+    
+    # Initialize upsampler
+    upsampler = RealESRGANer(
+        scale=4,
+        model_path=model_file,
+        model=model,
+        tile=512,  # Increased tile size for better quality
+        tile_pad=32,  # Increased padding to reduce artifacts
+        pre_pad=0,
+        half=device == 'cuda'  # Use half precision on CUDA
+    )
+    
+    return upsampler
+
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -159,6 +227,60 @@ def contact_us():
 @app.route('/explore_tools')
 def explore_tools():
     return render_template('explore_tools.html')
+
+
+@app.route('/upscale', methods=['GET', 'POST'])
+def upscale():
+    try:
+        if request.method == 'POST':
+            if 'image' not in request.files:
+                return 'No image uploaded', 400
+            
+            file = request.files['image']
+            if file.filename == '':
+                return 'No image selected', 400
+
+            # Read the image
+            img_stream = BytesIO(file.read())
+            original_image = Image.open(img_stream).convert('RGB')
+            
+            # Convert PIL Image to numpy array
+            input_img = np.array(original_image)
+            
+            try:
+                # Initialize Real-ESRGAN
+                upsampler = init_realesrgan()
+                
+                # Process the image with tiling
+                output, _ = upsampler.enhance(input_img, outscale=4)
+                
+                # Convert output to PIL Image
+                upscaled_pil = Image.fromarray(output)
+                
+            except Exception as e:
+                logging.error(f"Real-ESRGAN failed, falling back to OpenCV: {str(e)}")
+                # Fallback to OpenCV if Real-ESRGAN fails
+                # Use LANCZOS4 for high-quality upscaling
+                upscaled = cv2.resize(input_img, None, fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+                upscaled_pil = Image.fromarray(upscaled)
+            
+            # Convert images to base64 for display
+            buffered = BytesIO()
+            original_image.save(buffered, format="PNG", optimize=True)
+            original_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
+            buffered = BytesIO()
+            upscaled_pil.save(buffered, format="PNG", optimize=True)
+            upscaled_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
+            return render_template('upscale.html', 
+                                original_image=original_base64,
+                                upscaled_image=upscaled_base64)
+        
+        return render_template('upscale.html')
+    except Exception as e:
+        logging.error(f"Error in upscale route: {str(e)}")
+        return "An error occurred while processing the image", 500
 
 @app.route('/generate', methods=['POST'])
 def generate_image():
@@ -177,6 +299,10 @@ def generate_image():
                 # Use Hugging Face API
                 logger.debug("Making API request to Hugging Face")
                 image_data = generate_with_huggingface(prompt)
+            elif model == SD_MODEL:
+                # Use Stable Diffusion 3.5
+                logger.debug("Making API request to Stable Diffusion")
+                image_data = generate_with_sd(prompt)
             else:
                 # Use Together AI
                 logger.debug("Making API request to Together AI")
