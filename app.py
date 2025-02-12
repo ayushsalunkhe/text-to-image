@@ -18,6 +18,13 @@ from PIL import Image
 import torch
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan import RealESRGANer
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from googletrans import Translator
+import langdetect
+
+# Initialize Flask app
+app = Flask(__name__)
 
 # Set up logging
 logging.basicConfig(
@@ -79,10 +86,131 @@ def retry_with_backoff(retries=3, backoff_in_seconds=1):
         return wrapper
     return decorator
 
+# Initialize translation
+translator = Translator()
+
+@retry_with_backoff(retries=3, backoff_in_seconds=1)
+def translate_text(text, target_lang='en'):
+    """Translate text to target language"""
+    try:
+        # Detect the source language
+        source_lang = langdetect.detect(text)
+        
+        # If text is already in English, return as is
+        if source_lang == 'en':
+            return text, source_lang
+            
+        # Translate to English
+        translation = translator.translate(text, dest=target_lang)
+        return translation.text, source_lang
+    except Exception as e:
+        logger.error(f"Translation error: {str(e)}")
+        return text, 'en'  # Return original text if translation fails
+
+@app.route('/detect-language', methods=['POST'])
+def detect_language():
+    """Detect the language of input text"""
+    try:
+        text = request.form.get('text')
+        if not text:
+            return jsonify({'success': False, 'error': 'No text provided'}), 400
+            
+        language = langdetect.detect(text)
+        language_name = langdetect.LANGUAGES.get(language, 'Unknown')
+        
+        return jsonify({
+            'success': True, 
+            'language': language,
+            'language_name': language_name
+        })
+    except Exception as e:
+        logger.error(f"Language detection error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/translate', methods=['POST'])
+def translate():
+    """Translate text to English"""
+    try:
+        text = request.form.get('text')
+        if not text:
+            return jsonify({'success': False, 'error': 'No text provided'}), 400
+            
+        translated_text, source_lang = translate_text(text)
+        return jsonify({
+            'success': True,
+            'translated_text': translated_text,
+            'source_language': source_lang
+        })
+    except Exception as e:
+        logger.error(f"Translation error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Set API keys
 os.environ["TOGETHER_API_KEY"] = "1dd1a7e6cbd43070e903346ae2638952d71e074221fed5deabb4869232499fbd"
 HF_TOKEN = "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"
 os.environ["HUGGINGFACE_TOKEN"] = HF_TOKEN
+
+# Configure Gemini API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
+@retry_with_backoff(retries=3, backoff_in_seconds=1)
+def sync_enhance_prompt_with_gemini(prompt):
+    """Enhance the user's prompt using Gemini 2.0 Flash"""
+    try:
+        # First translate the prompt to English if needed
+        translated_prompt, source_lang = translate_text(prompt)
+        
+        # Configure the model
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # Create a structured prompt for Gemini using more neutral language
+        gemini_prompt = f"""
+        Please help improve this image description by:
+        1. Adding visual details
+        2. Including style elements
+        3. Maintaining the original meaning
+        
+        Input description: {translated_prompt}
+        
+        Provide only the enhanced description without any additional text or explanations.
+        """
+        
+        # Generate the enhanced prompt with adjusted safety settings
+        response = model.generate_content(
+            gemini_prompt,
+            safety_settings=[
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+        )
+        
+        # Extract the enhanced prompt
+        enhanced_prompt = response.text.strip()
+        
+        # If the original prompt was not in English, translate the enhanced prompt back
+        if source_lang != 'en':
+            enhanced_prompt, _ = translate_text(enhanced_prompt, target_lang=source_lang)
+            
+        logger.debug(f"Enhanced prompt: {enhanced_prompt}")
+        return enhanced_prompt
+    except Exception as e:
+        logger.error(f"Error enhancing prompt with Gemini: {str(e)}")
+        return prompt  # Fallback to original prompt if enhancement fails
 
 # Login to Hugging Face
 try:
@@ -92,7 +220,6 @@ except Exception as e:
     logger.error(f"Failed to login to Hugging Face: {str(e)}")
 
 # Initialize clients
-app = Flask(__name__)
 client = Together()
 hf_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
 
@@ -101,7 +228,7 @@ API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-
 SD_MODEL = "stabilityai/stable-diffusion-3.5-large-turbo"
 headers = {"Authorization": f"Bearer {os.environ['HUGGINGFACE_TOKEN']}"}
 
-@retry_with_backoff(retries=3)
+@retry_with_backoff(retries=3, backoff_in_seconds=1)
 def generate_with_huggingface(prompt):
     logger.info("Generating image with Hugging Face API")
     try:
@@ -282,6 +409,19 @@ def upscale():
         logging.error(f"Error in upscale route: {str(e)}")
         return "An error occurred while processing the image", 500
 
+@app.route('/enhance-prompt', methods=['POST'])
+def enhance_prompt():
+    try:
+        prompt = request.form.get('prompt')
+        if not prompt:
+            return jsonify({'success': False, 'error': 'No prompt provided'}), 400
+            
+        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt)
+        return jsonify({'success': True, 'enhanced_prompt': enhanced_prompt})
+    except Exception as e:
+        logger.error(f"Error in enhance_prompt endpoint: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/generate', methods=['POST'])
 def generate_image():
     try:
@@ -290,23 +430,26 @@ def generate_image():
         
         if not prompt or not model:
             logger.error("Missing required parameters")
-            return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
+            return jsonify({'success': False, 'error': 'Missing prompt or model'}), 400
             
         logger.debug(f"Received prompt: {prompt} and model: {model}")
+        
+        # Enhance the prompt using Gemini
+        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt)
         
         try:
             if model == "black-forest-labs/FLUX.1-dev":
                 # Use Hugging Face API
                 logger.debug("Making API request to Hugging Face")
-                image_data = generate_with_huggingface(prompt)
+                image_data = generate_with_huggingface(enhanced_prompt)
             elif model == SD_MODEL:
                 # Use Stable Diffusion 3.5
                 logger.debug("Making API request to Stable Diffusion")
-                image_data = generate_with_sd(prompt)
+                image_data = generate_with_sd(enhanced_prompt)
             else:
                 # Use Together AI
                 logger.debug("Making API request to Together AI")
-                image_data = generate_with_together(prompt, model)
+                image_data = generate_with_together(enhanced_prompt, model)
                 
             return jsonify({'success': True, 'image': image_data})
                 
