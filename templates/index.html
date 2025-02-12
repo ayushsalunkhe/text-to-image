@@ -417,15 +417,28 @@
     <div class="container mb-5">
         <div class="generator-card">
             <form id="generateForm" class="needs-validation" novalidate>
-                <div class="mb-4">
-                    <textarea 
-                        class="form-control"
-                        id="prompt"
-                        name="prompt"
-                        rows="3"
-                        required
-                        placeholder="Describe the image you want to create..."
-                    ></textarea>
+                <div class="form-group mb-4">
+                    <label for="prompt" class="form-label">Enter your prompt in any language:</label>
+                    <div class="input-group">
+                        <textarea class="form-control" id="prompt" name="prompt" rows="3" required 
+                            placeholder="Describe the image you want to create in any language..."></textarea>
+                        <div class="input-group-append d-flex">
+                            <button type="button" class="btn btn-outline-primary" id="enhanceBtn">
+                                <span class="enhance-text">Enhance</span>
+                                <div class="spinner-border spinner-border-sm d-none" role="status" id="enhanceSpinner">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <small class="form-text text-light" id="languageInfo">
+                            <i class="fas fa-language"></i> Detected Language: <span id="detectedLanguage">Not detected</span>
+                        </small>
+                        <small class="form-text text-light">
+                            <i class="fas fa-info-circle"></i> You can write in any language - we'll translate automatically
+                        </small>
+                    </div>
                 </div>
                 <div class="mb-4">
                     <select class="form-control" id="model" name="model" required>
@@ -589,6 +602,90 @@
                 loadingMsg.textContent = "Creating your masterpiece with high quality settings...";
             } else {
                 loadingMsg.textContent = "Creating your masterpiece...";
+            }
+        });
+
+        // Language detection and translation
+        const promptInput = document.getElementById('prompt');
+        const languageInfo = document.getElementById('languageInfo');
+        const detectedLanguage = document.getElementById('detectedLanguage');
+        let typingTimer;
+        
+        // Detect language while typing
+        promptInput.addEventListener('input', () => {
+            clearTimeout(typingTimer);
+            const text = promptInput.value.trim();
+            
+            if (text) {
+                typingTimer = setTimeout(() => detectLanguage(text), 500);
+            } else {
+                detectedLanguage.textContent = 'Not detected';
+            }
+        });
+        
+        async function detectLanguage(text) {
+            try {
+                const formData = new FormData();
+                formData.append('text', text);
+                
+                const response = await fetch('/detect-language', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    detectedLanguage.textContent = data.language_name;
+                }
+            } catch (error) {
+                console.error('Error detecting language:', error);
+            }
+        }
+        
+        // Enhance prompt functionality
+        const enhanceBtn = document.getElementById('enhanceBtn');
+        const enhanceSpinner = document.getElementById('enhanceSpinner');
+        const enhanceText = document.querySelector('.enhance-text');
+
+        enhanceBtn.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+            if (!prompt) {
+                alert('Please enter a prompt first');
+                return;
+            }
+
+            try {
+                // Show loading state
+                enhanceBtn.disabled = true;
+                enhanceText.classList.add('d-none');
+                enhanceSpinner.classList.remove('d-none');
+
+                const formData = new FormData();
+                formData.append('prompt', prompt);
+
+                const response = await fetch('/enhance-prompt', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    promptInput.value = data.enhanced_prompt;
+                    // Detect language of enhanced prompt
+                    detectLanguage(data.enhanced_prompt);
+                } else {
+                    throw new Error(data.error || 'Failed to enhance prompt');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to enhance prompt: ' + error.message);
+            } finally {
+                // Reset button state
+                enhanceBtn.disabled = false;
+                enhanceText.classList.remove('d-none');
+                enhanceSpinner.classList.add('d-none');
             }
         });
     </script>
