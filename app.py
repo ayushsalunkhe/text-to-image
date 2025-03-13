@@ -162,7 +162,7 @@ def sync_enhance_prompt_with_gemini(prompt):
         translated_prompt, source_lang = translate_text(prompt)
         
         # Configure the model
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
         
         # Create a structured prompt for Gemini using more neutral language
         gemini_prompt = f"""
