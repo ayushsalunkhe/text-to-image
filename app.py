@@ -9,7 +9,7 @@ from io import BytesIO
 import time
 import random
 from functools import wraps
-import requests
+from translate import Translator
 from datetime import datetime
 import re
 import cv2
@@ -20,8 +20,9 @@ from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan import RealESRGANer
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
-from googletrans import Translator
 import langdetect
+from langdetect import DetectorFactory, LangDetectException
+import requests
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 # Create output directory if it doesn't exist
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Set fixed seed for language detection to ensure consistent results
+DetectorFactory.seed = 0
 
 def sanitize_filename(prompt):
     """Convert prompt to a valid filename by removing special characters and limiting length"""
@@ -86,37 +90,122 @@ def retry_with_backoff(retries=3, backoff_in_seconds=1):
         return wrapper
     return decorator
 
-# Initialize translation
-translator = Translator()
+translator = Translator(to_lang="en")
+
+# Configure Gemini API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
+@retry_with_backoff(retries=3, backoff_in_seconds=1)
+def detect_language_with_gemini(text):
+    """Detect language using Gemini API"""
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
+        prompt = f"""
+        Detect the language of the following text. 
+        Return only the ISO 639-1 language code (e.g., 'en' for English, 'es' for Spanish, etc.).
+        
+        Text: {text}
+        """
+        
+        response = model.generate_content(prompt)
+        language_code = response.text.strip().lower()
+        
+        # Clean up response to ensure it's just the language code
+        language_code = re.sub(r'[^a-z]', '', language_code)
+        
+        # Fallback to langdetect if Gemini returns invalid code
+        if len(language_code) != 2:
+            logger.warning(f"Gemini returned invalid language code: {language_code}. Falling back to langdetect.")
+            return langdetect.detect(text)
+            
+        return language_code
+    except Exception as e:
+        logger.error(f"Gemini language detection error: {str(e)}")
+        # Fallback to langdetect
+        return langdetect.detect(text)
+
+@retry_with_backoff(retries=3, backoff_in_seconds=1)
+def translate_with_gemini(text, target_lang='en'):
+    """Translate text using Gemini API"""
+    try:
+        # First detect the language
+        source_lang = detect_language_with_gemini(text)
+        
+        # If already in target language, return as is
+        if source_lang == target_lang:
+            return text, source_lang
+            
+        model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
+        prompt = f"""
+        Translate the following text from {source_lang} to {target_lang}.
+        Return only the translated text without any additional explanations.
+        
+        Text: {text}
+        """
+        
+        response = model.generate_content(prompt)
+        translated_text = response.text.strip()
+        
+        return translated_text, source_lang
+    except Exception as e:
+        logger.error(f"Gemini translation error: {str(e)}")
+        # Fallback to basic translator
+        try:
+            translation = translator.translate(text)
+            return translation, 'unknown'
+        except:
+            return text, 'unknown'
 
 @retry_with_backoff(retries=3, backoff_in_seconds=1)
 def translate_text(text, target_lang='en'):
-    """Translate text to target language"""
+    """Translate text to target language with Gemini fallback"""
     try:
-        # Detect the source language
-        source_lang = langdetect.detect(text)
-        
-        # If text is already in English, return as is
-        if source_lang == 'en':
-            return text, source_lang
-            
-        # Translate to English
-        translation = translator.translate(text, dest=target_lang)
-        return translation.text, source_lang
+        # Try with Gemini first
+        return translate_with_gemini(text, target_lang)
     except Exception as e:
-        logger.error(f"Translation error: {str(e)}")
-        return text, 'en'  # Return original text if translation fails
+        logger.error(f"Gemini translation failed: {str(e)}")
+        # Fallback to basic translator
+        try:
+            # Detect the source language
+            source_lang = langdetect.detect(text)
+            
+            # If text is already in English, return as is
+            if source_lang == target_lang:
+                return text, source_lang
+                
+            # Translate using translate package
+            translation = translator.translate(text)
+            return translation, source_lang
+        except Exception as e:
+            logger.error(f"Translation error: {str(e)}")
+            return text, 'unknown'  # Return original text if translation fails
 
 @app.route('/detect-language', methods=['POST'])
 def detect_language():
-    """Detect the language of input text"""
+    """Detect the language of input text using Gemini"""
     try:
         text = request.form.get('text')
         if not text:
             return jsonify({'success': False, 'error': 'No text provided'}), 400
             
-        language = langdetect.detect(text)
-        language_name = langdetect.LANGUAGES.get(language, 'Unknown')
+        # Try Gemini first, fallback to langdetect
+        try:
+            language = detect_language_with_gemini(text)
+        except Exception:
+            language = langdetect.detect(text)
+            
+        # Get language name
+        try:
+            language_name = langdetect.langdetect.detect_lang_name(language)
+        except:
+            # Fallback language names for common codes
+            language_names = {
+                'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+                'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese',
+                'zh': 'Chinese', 'ko': 'Korean', 'ar': 'Arabic', 'hi': 'Hindi'
+            }
+            language_name = language_names.get(language, 'Unknown')
         
         return jsonify({
             'success': True, 
@@ -129,13 +218,15 @@ def detect_language():
 
 @app.route('/translate', methods=['POST'])
 def translate():
-    """Translate text to English"""
+    """Translate text using Gemini"""
     try:
         text = request.form.get('text')
+        target_lang = request.form.get('target_lang', 'en')
+        
         if not text:
             return jsonify({'success': False, 'error': 'No text provided'}), 400
             
-        translated_text, source_lang = translate_text(text)
+        translated_text, source_lang = translate_with_gemini(text, target_lang)
         return jsonify({
             'success': True,
             'translated_text': translated_text,
@@ -150,16 +241,34 @@ os.environ["TOGETHER_API_KEY"] = "1dd1a7e6cbd43070e903346ae2638952d71e074221fed5
 HF_TOKEN = "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"
 os.environ["HUGGINGFACE_TOKEN"] = HF_TOKEN
 
-# Configure Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+# Login to Hugging Face
+try:
+    login(token=HF_TOKEN)
+    logger.info("Successfully logged in to Hugging Face")
+except Exception as e:
+    logger.error(f"Failed to login to Hugging Face: {str(e)}")
+
+# Initialize clients
+client = Together()
+hf_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
+
+# Update API URLs and add new model
+API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
+SD_MODEL = "stabilityai/stable-diffusion-3.5-large-turbo"
+headers = {"Authorization": f"Bearer {os.environ['HUGGINGFACE_TOKEN']}"}
 
 @retry_with_backoff(retries=3, backoff_in_seconds=1)
-def sync_enhance_prompt_with_gemini(prompt):
-    """Enhance the user's prompt using Gemini 2.0 Flash"""
+def sync_enhance_prompt_with_gemini(prompt, preserve_language=True):
+    """Enhance the user's prompt using Gemini 2.0 Flash with multilingual support"""
     try:
-        # First translate the prompt to English if needed
-        translated_prompt, source_lang = translate_text(prompt)
+        # First detect the original language
+        original_lang = detect_language_with_gemini(prompt)
+        
+        # Translate to English for processing if not already in English
+        if original_lang != 'en':
+            translated_prompt, _ = translate_with_gemini(prompt, 'en')
+        else:
+            translated_prompt = prompt
         
         # Configure the model
         model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
@@ -167,9 +276,10 @@ def sync_enhance_prompt_with_gemini(prompt):
         # Create a structured prompt for Gemini using more neutral language
         gemini_prompt = f"""
         Please help improve this image description by:
-        1. Adding visual details
-        2. Including style elements
-        3. Maintaining the original meaning
+        1. Adding visual details (lighting, composition, perspective)
+        2. Including style elements (artistic style, mood, atmosphere)
+        3. Enhancing descriptive language (colors, textures, materials)
+        4. Maintaining the original meaning and intent
         
         Input description: {translated_prompt}
         
@@ -202,31 +312,16 @@ def sync_enhance_prompt_with_gemini(prompt):
         # Extract the enhanced prompt
         enhanced_prompt = response.text.strip()
         
-        # If the original prompt was not in English, translate the enhanced prompt back
-        if source_lang != 'en':
-            enhanced_prompt, _ = translate_text(enhanced_prompt, target_lang=source_lang)
+        # If the original prompt was not in English and we want to preserve language,
+        # translate the enhanced prompt back to the original language
+        if original_lang != 'en' and preserve_language:
+            enhanced_prompt, _ = translate_with_gemini(enhanced_prompt, original_lang)
             
         logger.debug(f"Enhanced prompt: {enhanced_prompt}")
         return enhanced_prompt
     except Exception as e:
         logger.error(f"Error enhancing prompt with Gemini: {str(e)}")
         return prompt  # Fallback to original prompt if enhancement fails
-
-# Login to Hugging Face
-try:
-    login(token=HF_TOKEN)
-    logger.info("Successfully logged in to Hugging Face")
-except Exception as e:
-    logger.error(f"Failed to login to Hugging Face: {str(e)}")
-
-# Initialize clients
-client = Together()
-hf_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
-
-# Update API URLs and add new model
-API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
-SD_MODEL = "stabilityai/stable-diffusion-3.5-large-turbo"
-headers = {"Authorization": f"Bearer {os.environ['HUGGINGFACE_TOKEN']}"}
 
 @retry_with_backoff(retries=3, backoff_in_seconds=1)
 def generate_with_huggingface(prompt):
@@ -306,6 +401,38 @@ def generate_with_sd(prompt):
         
     except Exception as e:
         logger.error(f"Stable Diffusion generation error: {str(e)}")
+        raise
+
+@retry_with_backoff(retries=3)
+def generate_with_gemini(prompt):
+    """Generate image using Gemini API"""
+    logger.info("Generating image with Gemini")
+    try:
+        # Configure the model - use gemini-1.5-pro for image generation
+        model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
+        
+        # Generate image
+        response = model.generate_content(
+            f"Generate an image based on this description: {prompt}",
+            generation_config={"temperature": 0.9}
+        )
+        
+        # Extract image data
+        if response.parts and hasattr(response.parts[0], 'image_data'):
+            image_bytes = response.parts[0].image_data
+            
+            # Save image locally
+            save_image_locally(image_bytes, prompt, "gemini")
+            
+            # Convert to base64
+            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            logger.info("Successfully generated image with Gemini")
+            return image_base64
+        else:
+            raise Exception("No image data in Gemini response")
+            
+    except Exception as e:
+        logger.error(f"Gemini image generation error: {str(e)}")
         raise
 
 def init_realesrgan():
@@ -413,11 +540,23 @@ def upscale():
 def enhance_prompt():
     try:
         prompt = request.form.get('prompt')
+        preserve_language = request.form.get('preserve_language', 'true').lower() == 'true'
+        
         if not prompt:
             return jsonify({'success': False, 'error': 'No prompt provided'}), 400
             
-        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt)
-        return jsonify({'success': True, 'enhanced_prompt': enhanced_prompt})
+        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt, preserve_language)
+        
+        # Detect languages for response
+        original_lang = detect_language_with_gemini(prompt)
+        enhanced_lang = detect_language_with_gemini(enhanced_prompt)
+        
+        return jsonify({
+            'success': True, 
+            'enhanced_prompt': enhanced_prompt,
+            'original_language': original_lang,
+            'enhanced_language': enhanced_lang
+        })
     except Exception as e:
         logger.error(f"Error in enhance_prompt endpoint: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -427,6 +566,7 @@ def generate_image():
     try:
         prompt = request.form.get('prompt')
         model = request.form.get('model')
+        preserve_language = request.form.get('preserve_language', 'false').lower() == 'true'
         
         if not prompt or not model:
             logger.error("Missing required parameters")
@@ -434,24 +574,44 @@ def generate_image():
             
         logger.debug(f"Received prompt: {prompt} and model: {model}")
         
+        # Detect original language
+        original_lang = detect_language_with_gemini(prompt)
+        
         # Enhance the prompt using Gemini
-        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt)
+        enhanced_prompt = sync_enhance_prompt_with_gemini(prompt, preserve_language)
+        
+        # For non-English prompts, we need to translate to English for most models
+        # unless preserve_language is True and the model supports it
+        if original_lang != 'en' and not preserve_language:
+            # Translate to English for image generation
+            generation_prompt, _ = translate_with_gemini(enhanced_prompt, 'en')
+        else:
+            generation_prompt = enhanced_prompt
         
         try:
-            if model == "black-forest-labs/FLUX.1-dev":
+            if model == "gemini":
+                # Use Gemini for image generation
+                image_data = generate_with_gemini(generation_prompt)
+            elif model == "black-forest-labs/FLUX.1-dev":
                 # Use Hugging Face API
                 logger.debug("Making API request to Hugging Face")
-                image_data = generate_with_huggingface(enhanced_prompt)
+                image_data = generate_with_huggingface(generation_prompt)
             elif model == SD_MODEL:
                 # Use Stable Diffusion 3.5
                 logger.debug("Making API request to Stable Diffusion")
-                image_data = generate_with_sd(enhanced_prompt)
+                image_data = generate_with_sd(generation_prompt)
             else:
                 # Use Together AI
                 logger.debug("Making API request to Together AI")
-                image_data = generate_with_together(enhanced_prompt, model)
+                image_data = generate_with_together(generation_prompt, model)
                 
-            return jsonify({'success': True, 'image': image_data})
+            return jsonify({
+                'success': True, 
+                'image': image_data,
+                'original_language': original_lang,
+                'used_prompt': generation_prompt,
+                'enhanced_prompt': enhanced_prompt
+            })
                 
         except Exception as e:
             error_msg = str(e)
